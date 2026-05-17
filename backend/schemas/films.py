@@ -12,6 +12,7 @@ class FilmBase(BaseModel):
     director: str
     actors: Annotated[list[str], Field(description='Список актеров')]
     
+    
     @field_validator("year", mode='after')
     def year_validator(cls, value):
         if value > datetime.now().year:
