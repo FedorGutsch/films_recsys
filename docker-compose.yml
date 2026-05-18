@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  # Наша база данных с поддержкой векторов
+  db:
+    image: pgvector/pgvector:pg16 # Специальный образ со встроенным pgvector
+    container_name: recsys_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Чтобы данные не удалялись при перезапуске
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: recsys_pgadmin
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+    ports:
+      - "5050:80"
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
