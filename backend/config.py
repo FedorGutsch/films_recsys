@@ -3,13 +3,25 @@ from enum import Enum
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8' ,extra='ignore', case_sensitive=True)
+    DB_USER: str
+    DB_PASS: str
+    DB_HOST: str
+    DB_PORT: int
+    DB_NAME: str
 
+
+    @property
+    def database_url(self) -> str:
+        return f"postgresql://{self.DB_USER}:{self.DB_PASS}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+
+"""
 class Age_limits(Enum):
     ALL_AGES = '0+'
     KIDS_FROM_6_TO_12 = '6+'
     KIDS_FROM_12_TO_16 = '12+'
     KIDS_FROM_16_TO_18 = '16+'
     ADULTS = '18+'
-
+"""
 
 settings = Settings()
+
