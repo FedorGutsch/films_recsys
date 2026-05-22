@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
 from typing import Annotated, Optional, Literal
-
+from scripts.strings_transformers import String_to_list_transformer
 from datetime import datetime
 
 
@@ -14,14 +14,20 @@ class FilmBase(BaseModel):
     
     
     @field_validator("year", mode='after')
+    @classmethod
     def year_validator(cls, value):
         if value > datetime.now().year:
             raise ValueError('Год выпуска должен быть меньше или равен чем текущий')
         return value
     
     @field_validator('actors', mode='before')
-    def actor_to_list():
-        pass
+    @classmethod
+    def actor_to_list(cls, value):
+        try:
+            actors = String_to_list_transformer.transform()
+            return actors
+        except Exception as e:
+            raise ValueError(f"Не удалось распарсить список актёров: {e} \n Напишите их в одну строку через запятую ") from e
     
     
 class FilmCreate(FilmBase):
