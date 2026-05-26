@@ -1,153 +1,133 @@
-from pydantic import BaseModel, Field, field_validator, SecretStr, ConfigDict
-from typing import Annotated, Optional
+from datetime import datetime
+from math import isinf, isnan
+from typing import Annotated, List, Optional
 
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 EMBEDDING_DIM = 1024
-
-
-# ---------------------------------------------------------------------------
-# Вспомогательные функции
-# ---------------------------------------------------------------------------
-
-def validate_password_strength(password: SecretStr) -> SecretStr:
-    """Проверка сложности пароля. Выбрасывает ValueError, если пароль слабый."""
-    pwd = password.get_secret_value()
-    errors = []
-    if len(pwd) < 8:
-        errors.append("минимум 8 символов")
-    if not any(c.isupper() for c in pwd):
-        errors.append("хотя бы одна заглавная буква")
-    if not any(c.islower() for c in pwd):
-        errors.append("хотя бы одна строчная буква")
-    if not any(c.isdigit() or (not c.isalnum()) for c in pwd):
-        errors.append("хотя бы одна цифра или спецсимвол")
-    if errors:
-        raise ValueError("Пароль не удовлетворяет требованиям: " + ", ".join(errors))
-    return password
-
+SCORE_MIN, SCORE_MAX = 0.0, 10.0
 
 # ---------------------------------------------------------------------------
-# (без флага is_deleted)
+# 1. БАЗОВЫЕ АЛИАСЫ 
+# ---------------------------------------------------------------------------
+LoginField = Annotated[
+    str,
+    Field(min_length=3, max_length=50, pattern=r"^[a-zA-Z0-9_\-\.]+$", description="Логин пользователя")
+]
+PasswordField = Annotated[
+    SecretStr,
+    Field(min_length=8, max_length=128, description="Пароль")
+]
+
+# ---------------------------------------------------------------------------
+# 2. КЛИЕНТСКИЕ МОДЕЛИ ВВОДА (Request DTOs)
 # ---------------------------------------------------------------------------
 
-class UserBase(BaseModel):
-    """Общие поля с валидацией логина."""
-    login: Annotated[str, Field(
-        min_length=3,
-        max_length=50,
-        pattern=r"^[a-zA-Z0-9_\-\.]+$",
-        description="Логин (буквы, цифры, _, -, .)"
-    )]
+class UserCreate(BaseModel):
+    """Регистрация. Только учётка, без вектора."""
+    login: LoginField
+    password: PasswordField
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    @field_validator("login", mode="before")
+    @field_validator("password", mode="after")
     @classmethod
-    def strip_login(cls, v: str) -> str:
-        if isinstance(v, str):
-            return v.strip()
+    def _check_password_strength(cls, v: SecretStr) -> SecretStr:
+        pwd = v.get_secret_value()
+        checks = [
+            len(pwd) >= 8,
+            any(c.isupper() for c in pwd),
+            any(c.islower() for c in pwd),
+            any(c.isdigit() for c in pwd),
+        ]
+        if not all(checks):
+            raise ValueError("Пароль должен содержать: 8+ символов, заглавную, строчную букву и цифру")
         return v
 
 
-class UserRead(UserBase):
-    """Ответ API: публичные данные + флаг мягкого удаления."""
-    id: int
-    is_deleted: bool = Field(
-        description="Признак мягкого удаления (true = пользователь удалён)"
+class FilmScoreInput(BaseModel):
+    """Единичная оценка фильма в опроснике или после просмотра."""
+    film_id: int = Field(gt=0, description="ID фильма из каталога")
+    score: float = Field(ge=SCORE_MIN, le=SCORE_MAX, description=f"Оценка от {SCORE_MIN} до {SCORE_MAX}")
+    is_watched: bool = Field(default=False, description="True = смотрел, False = интерес по описанию")
+    model_config = ConfigDict(extra="forbid")
+
+
+class UserOnboardingRequest(BaseModel):
+    """Шаг 2: Мини-опросник после регистрации. Запускает генерацию вектора."""
+    ratings: List[FilmScoreInput] = Field(
+        min_length=5, max_length=50,
+        description="Минимум 5 оценок для стабильного холодного старта"
     )
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("ratings", mode="after")
+    @classmethod
+    def _ensure_unique_films(cls, v: List[FilmScoreInput]) -> List[FilmScoreInput]:
+        ids = [r.film_id for r in v]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Дубликаты film_id в одном запросе запрещены")
+        return v
+
+
+class UserRatingUpdateRequest(BaseModel):
+    """Пакетное обновление оценок после получения рекомендаций."""
+    ratings: List[FilmScoreInput] = Field(min_length=1, max_length=20)
+    current_vector_version: int = Field(ge=0, description="Версия вектора для optimistic locking")
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("ratings", mode="after")
+    @classmethod
+    def _no_duplicates_in_batch(cls, v: List[FilmScoreInput]) -> List[FilmScoreInput]:
+        ids = [r.film_id for r in v]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Повторные оценки одного фильма в пакете запрещены")
+        return v
+
+# ---------------------------------------------------------------------------
+# 3. ВНУТРЕННИЕ / СЕРВИСНЫЕ МОДЕЛИ (Service DTOs)
+# ---------------------------------------------------------------------------
+
+class UserVectorInternal(BaseModel):
+    """Внутренний контейнер вектора предпочтений. НИКОГДА не уходит в клиентский ответ."""
+    vector: List[float] = Field(min_length=EMBEDDING_DIM, max_length=EMBEDDING_DIM)
+    version: int = Field(default=0, ge=0)
+    is_normalized: bool = Field(default=True, description="Флаг L2-нормализации (обязательно для cosine)")
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("vector", mode="before")
+    @classmethod
+    def _validate_vector(cls, v: Optional[List[float]]) -> List[float]:
+        if v is None:
+            return [0.0] * EMBEDDING_DIM
+        if len(v) != EMBEDDING_DIM:
+            raise ValueError(f"Ожидаемая размерность: {EMBEDDING_DIM}, получено: {len(v)}")
+        try:
+            clean = [float(x) for x in v]
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Нечисловые элементы в векторе: {e}")
+        if any(isnan(x) or isinf(x) for x in clean):
+            raise ValueError("Вектор содержит NaN или Inf значения")
+        return clean
+
+# ---------------------------------------------------------------------------
+# 4. МОДЕЛИ ОТВЕТА (Response DTOs)
+# ---------------------------------------------------------------------------
+
+class UserRead(BaseModel):
+    """Базовый публичный профиль. Вектор здесь отсутствует."""
+    id: int
+    login: str
+    is_deleted: bool = False
+    onboarding_completed: bool = False
+    preferences_version: int = 0
+    created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
 
-# ---------------------------------------------------------------------------
-# Клиентские модели ввода
-# ---------------------------------------------------------------------------
-
-class UserLogin(UserBase):
-    """Данные для входа."""
-    password: SecretStr = Field(
-        min_length=8,
-        max_length=128,
-        description="Пароль"
-    )
-
-
-class UserCreate(UserBase):
-    """Регистрация: только то, что присылает клиент."""
-    password: SecretStr = Field(
-        min_length=8,
-        max_length=128,
-        description="Пароль для регистрации"
-    )
-
-    @field_validator("password")
-    @classmethod
-    def validate_password(cls, v: SecretStr) -> SecretStr:
-        return validate_password_strength(v)
-
-
-class UserUpdate(BaseModel):
-    """Данные для обновления профиля (все поля опциональны).
-
-    Поле `is_deleted` позволяет пользователю удалить свой аккаунт (soft delete).
-    На уровне эндпоинта необходимо проверить, что пользователь меняет только свои данные.
-    """
-    login: Optional[str] = Field(
-        default=None,
-        min_length=3,
-        max_length=50,
-        pattern=r"^[a-zA-Z0-9_\-\.]+$",
-        description="Новый логин"
-    )
-    password: Optional[SecretStr] = Field(
-        default=None,
-        min_length=8,
-        max_length=128,
-        description="Новый пароль"
-    )
-    is_deleted: Optional[bool] = Field(
-        default=None,
-        description="Установить True для удаления аккаунта (soft delete)"
-    )
-
-    @field_validator("login", mode="before")
-    @classmethod
-    def strip_login(cls, v: str | None) -> str | None:
-        if isinstance(v, str):
-            return v.strip()
-        return v
-
-    @field_validator("password")
-    @classmethod
-    def validate_password_if_provided(cls, v: SecretStr | None) -> SecretStr | None:
-        if v is not None:
-            return validate_password_strength(v)
-        return v
-
-
-# ---------------------------------------------------------------------------
-# Внутренняя модель для сервисного слоя
-# ---------------------------------------------------------------------------
-
-class UserCreateInternal(UserBase):
-    """Модель, используемая сервисом после хеширования пароля и генерации вектора."""
-    password_hash: str = Field(description="Хеш пароля (bcrypt/argon2)")
-    preferences: list[float] = Field(
-        default_factory=lambda: [0.0] * EMBEDDING_DIM,
-        description="Вектор предпочтений размерности EMBEDDING_DIM"
-    )
-    is_deleted: bool = Field(
-        default=False,
-        description="Флаг мягкого удаления, по умолчанию False"
-    )
-
-    @field_validator("preferences", mode="before")
-    @classmethod
-    def validate_preferences(cls, v):
-        if v is None:
-            return [0.0] * EMBEDDING_DIM
-        if not isinstance(v, (list, tuple)):
-            raise ValueError("Вектор предпочтений должен быть списком")
-        if len(v) != EMBEDDING_DIM:
-            raise ValueError(f"Длина вектора должна быть ровно {EMBEDDING_DIM}")
-        try:
-            return [float(x) for x in v]
-        except (TypeError, ValueError) as e:
-            raise ValueError(f"Все элементы вектора должны быть числами: {e}")
+class UserOnboardingStatus(BaseModel):
+    """Ответ после прохождения опросника. Содержит только метаданные состояния."""
+    user_id: int
+    onboarding_completed: bool = True
+    preferences_version: int
+    cold_start_ready: bool = True
+    model_config = ConfigDict(from_attributes=True)
