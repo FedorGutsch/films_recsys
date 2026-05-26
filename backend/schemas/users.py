@@ -48,7 +48,6 @@ class FilmScoreInput(BaseModel):
     """Единичная оценка фильма в опроснике или после просмотра."""
     film_id: int = Field(gt=0, description="ID фильма из каталога")
     score: float = Field(ge=SCORE_MIN, le=SCORE_MAX, description=f"Оценка от {SCORE_MIN} до {SCORE_MAX}")
-    is_watched: bool = Field(default=False, description="True = смотрел, False = интерес по описанию")
     model_config = ConfigDict(extra="forbid")
 
 
