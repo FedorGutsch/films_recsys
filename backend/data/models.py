@@ -1,6 +1,8 @@
 from sqlalchemy import Column, Integer, String, Float, Text, ForeignKey, Table, Enum as SQLEnum
 from sqlalchemy.orm import declarative_base, relationship
 from pgvector.sqlalchemy import Vector
+from datetime import datetime
+from sqlalchemy import DateTime
 import enum
 
 Base = declarative_base()
@@ -70,6 +72,7 @@ class Film(Base):
     duration = Column(Integer) # Длительность в минутах
     poster_url = Column(String)
     age_limit = Column(SQLEnum(AgeLimitEnum), nullable=False, default=AgeLimitEnum.ALL_AGES)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     actors = relationship('Actor', secondary=film_actor_assoc, backref='films')
     genres = relationship('Genre', secondary=film_genre_assoc, backref='films')
