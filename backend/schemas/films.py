@@ -1,19 +1,22 @@
-from pydantic import BaseModel, Field, field_validator, ValidationInfo
+from pydantic import BaseModel, Field, field_validator, ValidationInfo, ConfigDict
 from typing import Annotated, Optional
 from datetime import datetime
 
 from scripts.strings_transformers import String_to_list_transformer
 from backend.constants import Age_limits
+from schemas.actors import ActorRead
+from schemas.genres import GenreRead
+from schemas.directors import DirectorRead
+from schemas.countries import CountryRead
 
 
 class FilmBase(BaseModel):
-    id: int
     title_ru: Annotated[
         str,
         Field(min_length=2, max_length=100, description="Название фильма на русском"),
     ]
     title_en: Annotated[
-        str,
+        Optional[str],
         Field(
             min_length=2, max_length=100, description="Название фильма на английском"
         ),
@@ -22,12 +25,6 @@ class FilmBase(BaseModel):
     rating_kp: Annotated[
         float, Field(ge=0.0, le=10.0, description="Рейтинг на кинопоиске")
     ]
-    director: Annotated[list[str], Field(description="Режиссер(ы)")]
-    actors: Annotated[list[str], Field(description="Список актеров")]
-    country: Annotated[
-        list[str], Field(description="Страны участвовавшие при создании")
-    ]
-    genre: Annotated[list[str], Field(description="Жанры")]
     plot: Annotated[str, Field(description="Сюжет")]
     duration: int
     poster_url: str
@@ -40,22 +37,18 @@ class FilmBase(BaseModel):
             raise ValueError("Год выпуска должен быть меньше или равен чем текущий")
         return value
 
-    @field_validator("actors", "director", "country", "genre", mode="before")
-    @classmethod
-    def transform_to_list(cls, value, info: ValidationInfo):
-        try:
-            return String_to_list_transformer.transform(value)
-        except Exception as e:
-            field_name = info.field_name
-            raise ValueError(
-                f"Не удалось распарсить {field_name}: {e} \n Напишите значения в одну строку через запятую"
-            ) from e
-
-
 class FilmCreate(FilmBase):
-    id: Optional[int] = None
+    directors: Annotated[list[str], Field(description="Режиссеры")]
+    actors: Annotated[list[str], Field(description="Список актеров")]
+    countries: Annotated[list[str], Field(description="Страны")]
+    genres: Annotated[list[str], Field(description="Жанры")]
     created_at: datetime = Field(default_factory=datetime.now)
 
 
 class FilmRead(FilmBase):
-    pass
+    id: int
+    directors: list[DirectorRead]
+    actors: list[ActorRead]
+    countries: list[CountryRead]
+    genres: list[GenreRead]
+    model_config = ConfigDict(from_attributes=True)
