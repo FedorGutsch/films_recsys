@@ -1,18 +1,9 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ValidationInfo
 from typing import Annotated, Optional, Literal
-from scripts.strings_transformers import String_to_list_transformer
 from datetime import datetime
-from enum import Enum
 
-'''
-class Age_limits(str, Enum):
-    ALL_AGES = '0+'
-    KIDS_FROM_6_TO_12 = '6+'
-    KIDS_FROM_12_TO_16 = '12+'
-    KIDS_FROM_16_TO_18 = '16+'
-    ADULTS = '18+'
-'''
-
+from scripts.strings_transformers import String_to_list_transformer
+from backend.constants import Age_limits
 
 class FilmBase(BaseModel):
     id: int 
@@ -20,14 +11,14 @@ class FilmBase(BaseModel):
     title_en: Annotated[str, Field(min_length=2, max_length=100, description="Название фильма на английском")]
     year: Annotated[int, Field(ge=1930, description='Год выпуска')]
     rating_kp: Annotated[float, Field(ge=0.0, le=10.0, description='Рейтинг на кинопоиске')]
-    director: str
+    director: Annotated[list[str], Field(description='Режиссер(ы)')]
     actors: Annotated[list[str], Field(description='Список актеров')]
     country: Annotated[list[str], Field(description='Страны участвовавшие при создании')]
     genre: Annotated[list[str], Field(description='Жанры')]
     plot: Annotated[str, Field(description='Сюжет')]
     duration: int
     poster_url: str
-    Age_limit: str
+    Age_limit: Age_limits
     
     @field_validator("year", mode='after')
     @classmethod
@@ -36,21 +27,23 @@ class FilmBase(BaseModel):
             raise ValueError('Год выпуска должен быть меньше или равен чем текущий')
         return value
     
-    @field_validator('actors', mode='before')
+    
+    @field_validator('actors', 'director', 'country', 'genre', mode='before')
     @classmethod
-    def actor_to_list(cls, value):
+    def transform_to_list(cls, value, info: ValidationInfo):
         try:
-            actors = String_to_list_transformer.transform(value)
-            return actors
+            return String_to_list_transformer.transform(value)
         except Exception as e:
-            raise ValueError(f"Не удалось распарсить список актёров: {e} \n Напишите их в одну строку через запятую ") from e
+            field_name = info.field_name
+            raise ValueError(f"Не удалось распарсить {field_name}: {e} \n Напишите значения в одну строку через запятую") from e
+
     
     
 class FilmCreate(FilmBase):
+    id: Optional[int] = None 
     created_at = datetime.now()
 
 
 class FilmRead(FilmBase):
-    id: int
     pass
-    
+
