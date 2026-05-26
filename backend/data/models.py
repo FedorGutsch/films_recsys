@@ -3,16 +3,18 @@ from sqlalchemy.orm import declarative_base, relationship
 from pgvector.sqlalchemy import Vector
 from datetime import datetime
 from sqlalchemy import DateTime
+from backend.constants import Age_limits
 import enum
 
 Base = declarative_base()
 
-class AgeLimitEnum(str, enum.Enum):
+"""class AgeLimitEnum(str, enum.Enum):
     ALL_AGES = '0+'
     AGE_6 = '6+'
     AGE_12 = '12+'
     AGE_16 = '16+'
     ADULTS = '18+'
+"""
 
 film_actor_assoc = Table(
     'film_actor', Base.metadata,
@@ -71,7 +73,7 @@ class Film(Base):
     plot = Column(Text)
     duration = Column(Integer) # Длительность в минутах
     poster_url = Column(String)
-    age_limit = Column(SQLEnum(AgeLimitEnum), nullable=False, default=AgeLimitEnum.ALL_AGES)
+    age_limit = Column(SQLEnum(Age_limits), nullable=False, default=Age_limits.ALL_AGES)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     actors = relationship('Actor', secondary=film_actor_assoc, backref='films')
@@ -94,8 +96,5 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     login = Column(String, unique=True, nullable=False)
     password_hash = Column(String, nullable=False)
-    
-    # Поле Вектора. dim=384 - это размерность вектора. 
-    # Зависит от того, какую нейросеть вы используете (например, у BERT часто 384 или 768).
-    # Спроси у напарника, какая размерность эмбеддингов планируется.
+    is_deleted = Column(bool, nullable=False)
     preferences = Column(Vector(1024))
